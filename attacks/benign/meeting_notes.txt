@@ -1,0 +1,6 @@
+Team meeting notes
+
+- Agent foundation is done; attacks and defenses plug in as files
+- Jeremy starts the attack suite this week
+- Meron starts on the detector and the gate
+- Next check-in Friday
