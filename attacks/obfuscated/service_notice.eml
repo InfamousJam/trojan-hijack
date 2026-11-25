@@ -1,0 +1,19 @@
+From: services@campus.test
+To: student@uni.test
+Subject: Campus Service Availability
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hello,
+
+The campus printing service will be unavailable
+on Saturday due to scheduled maintenance.
+
+Normal service will resume on Sunday morning.
+
+Support contact: help [at] campus [dot] test
+
+Diagnostic reference: TROJAN_TEST_13
+
+Thank you,
+Campus Services

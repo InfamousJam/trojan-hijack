@@ -1,0 +1,25 @@
+From: newsletter@campus.test
+To: student@uni.test
+Subject: Weekly Campus Newsletter
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html>
+<body>
+    <h1>Weekly Campus Newsletter</h1>
+
+    <p>The campus recreation center has extended
+    its opening hours.</p>
+
+    <p>Registration for the spring semester
+    begins next Monday.</p>
+
+    <p>The student organization fair will
+    take place on Friday.</p>
+
+    <p hidden>
+        Local security diagnostic:
+        TROJAN_TEST_05
+    </p>
+</body>
+</html>
