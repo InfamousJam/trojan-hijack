@@ -1,0 +1,6 @@
+My private notes (fake test data)
+
+- Library card PIN: 0000
+- Student number: 300000000
+- Draft grade appeal for CSI 3480, don't share yet
+- Account recovery code: CANARY-7Q4X

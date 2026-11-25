@@ -1,0 +1,1245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trojan Hijack</title>
+<style>
+  /* Colour means something here:
+       blue  = from Jas (trusted)                amber = from outside (untrusted)
+       red   = an email went where it shouldn't   green = a defense stopped it
+     System fonts only: the page makes no outside requests and works offline. */
+  :root {
+    color-scheme: light;
+    --paper: #ffffff;
+    --wash: #f4f5f7;
+    --ink: #15171c;
+    --muted: #5f6673;
+    --rule: #e3e6eb;
+    --rule-strong: #c4cad3;
+    --trusted: #1f5bd8;
+    --trusted-wash: #eaf0fd;
+    --untrusted: #8f5200;
+    --untrusted-line: #e0a033;
+    --untrusted-wash: #fff4dc;
+    --attacker-wash: #fffaf0;
+    --attacker-rule: #f1dcb4;
+    --bad: #c41e3a;
+    --bad-line: #f2b8c2;
+    --bad-wash: #fdecef;
+    --good: #11804f;
+    --good-line: #b5dcc8;
+    --good-wash: #e6f4ed;
+    --ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--paper); }
+  body { margin: 0; color: var(--ink); font: 15px/1.5 var(--ui); -webkit-font-smoothing: antialiased; }
+  .page { max-width: 1240px; margin: 0 auto; padding: 24px 24px 56px; }
+  .view { display: grid; gap: 20px; }
+  .view[hidden] { display: none; }
+  :focus-visible { outline: 2px solid var(--trusted); outline-offset: 2px; }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { cursor: default; }
+  h1, h2, h3, p, dl, dd { margin: 0; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  code, .mono { font-family: var(--mono); font-size: .9em; }
+
+  /* ---------------------------------------------------------------- header */
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 12px 24px;
+         flex-wrap: wrap; padding-bottom: 18px; margin-bottom: 20px; border-bottom: 1px solid var(--rule); }
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin-top: 2px; }
+  .tabs { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: 8px; padding: 3px; gap: 3px; }
+  .tabs button { border: 0; background: none; color: var(--muted); border-radius: 5px; padding: 6px 14px; font-weight: 600; font-size: 14px; }
+  .tabs button[aria-selected="true"] { background: var(--ink); color: #fff; }
+
+  /* ---------------------------------------------------------------- shared bits */
+  .card { border: 1px solid var(--rule); border-radius: 8px; padding: 18px 20px; background: var(--paper); min-width: 0; }
+  .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px 16px;
+               flex-wrap: wrap; margin-bottom: 14px; }
+  h2 { font-size: 16px; font-weight: 700; }
+  .hint { font-size: 13px; color: var(--muted); }
+  .hint.error { color: var(--bad); }
+  .run { background: var(--ink); color: #fff; border: 0; border-radius: 6px; padding: 10px 20px; font-weight: 600; white-space: nowrap; }
+  .run:hover:not(:disabled) { background: #000; }
+  .run:disabled { opacity: .45; }
+  .ghost { font-size: 13px; background: var(--paper); color: var(--ink);
+           border: 1px solid var(--rule-strong); border-radius: 6px; padding: 6px 12px; white-space: nowrap; }
+  .ghost:hover:not(:disabled) { border-color: var(--ink); }
+  .ghost:disabled { color: var(--muted); opacity: .7; }
+  .ghost.small { padding: 4px 11px; font-size: 12.5px; }
+  .tag { font-size: 12px; font-weight: 500; padding: 1px 8px; border-radius: 999px; }
+  .tag.trusted { color: var(--trusted); background: var(--trusted-wash); }
+  .badge { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+  .badge.bad { color: var(--bad); background: var(--bad-wash); }
+  .badge.good { color: var(--good); background: var(--good-wash); }
+  .empty { color: var(--muted); font-size: 13px; padding: 12px 16px; }
+
+  /* ---------------------------------------------------------------- the four steps */
+  .steps { display: flex; justify-content: space-between; align-items: center; gap: 12px 24px; flex-wrap: wrap; }
+  .steps ol { display: flex; flex-wrap: wrap; gap: 8px 22px; list-style: none; margin: 0; padding: 0;
+              counter-reset: step; font-size: 14px; color: var(--muted); }
+  .steps li { counter-increment: step; display: flex; align-items: center; gap: 8px; transition: color .2s; }
+  .steps li::before { content: counter(step); display: grid; place-items: center; width: 22px; height: 22px;
+                      border-radius: 50%; border: 1.5px solid var(--rule-strong); font-size: 12px; font-weight: 700;
+                      transition: background .2s, border-color .2s, color .2s; }
+  .steps li.done { color: var(--ink); }
+  .steps li.done::before { content: "✓"; border-color: var(--ink); }
+  .steps li.now { color: var(--ink); font-weight: 600; }
+  .steps li.now::before { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .actions { display: flex; gap: 8px; }
+
+  /* ---------------------------------------------------------------- attacker | mailbox */
+  .world { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 20px; align-items: stretch; }
+
+  .attacker { background: var(--attacker-wash); border-color: var(--attacker-rule); display: flex; flex-direction: column; }
+  .attacker h2 { color: var(--untrusted); }
+  .cat { font-size: 12px; font-weight: 600; color: var(--muted); margin: 10px 0 2px; }
+  .atk { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+         padding: 8px 0; border-top: 1px solid var(--attacker-rule); }
+  .atk-text { display: grid; min-width: 0; }
+  .atk-title { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .atk-meta { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #attacks { max-height: 230px; overflow-y: auto; }
+
+  .loot-box { margin-top: auto; padding-top: 16px; }
+  .loot-box h3 { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px;
+                 padding-top: 14px; border-top: 1px solid var(--attacker-rule); margin-bottom: 8px; }
+  .count { font-size: 12px; font-weight: 700; min-width: 22px; text-align: center; padding: 1px 7px;
+           border-radius: 999px; background: var(--paper); border: 1px solid var(--attacker-rule); color: var(--muted); }
+  .count.hot { background: var(--bad); border-color: var(--bad); color: #fff; }
+  #loot { display: grid; gap: 6px; max-height: 210px; overflow-y: auto; }
+  #loot .empty { padding: 0; }
+  .loot { display: grid; gap: 1px; width: 100%; text-align: left; background: var(--paper); color: var(--ink);
+          border: 1px solid var(--bad-line); border-left: 3px solid var(--bad); border-radius: 6px; padding: 7px 10px; }
+  .loot:hover { border-color: var(--bad); }
+  .loot .to { font: 600 13px var(--mono); color: var(--bad); overflow-wrap: anywhere; }
+  .loot .what { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .loot .leak { font-size: 12.5px; font-weight: 600; color: var(--bad); }
+  .loot.fresh { animation: loot 1.4s ease-out; }
+  @keyframes loot { 0% { background: var(--bad-wash); transform: scale(.96); } 30% { transform: none; } 100% { background: var(--paper); } }
+
+  .mailbox { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .mail-head { display: flex; align-items: baseline; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--rule); }
+  .addr { font: 13px var(--mono); color: var(--muted); }
+  .mail-body { display: grid; grid-template-columns: 290px minmax(0, 1fr); flex: 1; min-height: 430px; }
+  .list-col { border-right: 1px solid var(--rule); min-width: 0; display: flex; flex-direction: column; }
+  .folders { display: flex; border-bottom: 1px solid var(--rule); padding: 0 8px; }
+  .folder { flex: 1; border: 0; background: none; color: var(--muted); font-size: 13.5px; font-weight: 600;
+            padding: 10px 4px 9px; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+  .folder[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+  .folder .n { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 2px; }
+  .folder.unread .n { color: var(--trusted); }
+  .items { overflow-y: auto; max-height: 440px; }
+  .item { display: grid; gap: 1px; width: 100%; text-align: left; background: none; color: var(--ink);
+          border: 0; border-bottom: 1px solid var(--rule); padding: 10px 16px 10px 22px; position: relative; }
+  .item:hover { background: var(--wash); }
+  .item.selected { background: var(--wash); box-shadow: inset 3px 0 0 var(--ink); }
+  .item.unread::before { content: ""; position: absolute; left: 8px; top: 17px; width: 7px; height: 7px;
+                         border-radius: 50%; background: var(--trusted); }
+  .item .who { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item.unread .who, .item.unread .what { font-weight: 700; }
+  .item .what { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .peek { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .badge { justify-self: start; margin-top: 3px; }
+  .item.fresh { animation: arrive 1.3s ease-out; }
+  @keyframes arrive {
+    0%   { opacity: 0; transform: translateY(-10px); background: var(--untrusted-wash); }
+    25%  { opacity: 1; transform: none; background: var(--untrusted-wash); }
+    100% { background: transparent; }
+  }
+
+  /* reader */
+  .reader { padding: 18px 22px 22px; min-width: 0; overflow-y: auto; max-height: 520px; }
+  .reader-empty { height: 100%; display: grid; align-content: center; justify-items: center; text-align: center;
+                  gap: 4px; color: var(--muted); font-size: 14px; padding: 40px 12px; }
+  .reader-empty .big { font-size: 16px; font-weight: 600; color: var(--ink); }
+  .seg { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: 6px; overflow: hidden; margin-bottom: 14px; }
+  .seg button { border: 0; background: var(--paper); color: var(--muted); font-size: 13px; font-weight: 600; padding: 5px 12px; }
+  .seg button + button { border-left: 1px solid var(--rule-strong); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  .subject { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 8px; }
+  .headers { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; font-size: 13.5px;
+             padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--rule); }
+  .headers dt { color: var(--muted); }
+  .headers dd { overflow-wrap: anywhere; }
+  .mailtext { font-size: 15px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .raw { margin: 8px 0 0; font: 13px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+         border-left: 3px solid var(--untrusted-line); padding: 2px 0 2px 12px; }
+  .filename { font: 600 14px var(--mono); margin-bottom: 4px; }
+  .urlbar { font: 12.5px var(--mono); color: var(--muted); background: var(--wash); border-radius: 6px;
+            padding: 6px 10px; margin-bottom: 10px; overflow-wrap: anywhere; }
+  iframe.page { display: block; width: 100%; height: 300px; border: 1px solid var(--rule); border-radius: 6px; background: #fff; }
+  .line { display: block; padding: 0 6px; margin-left: -6px; border-radius: 3px; }
+  .line.obeyed { background: var(--bad-wash); }
+  .line.tried { background: var(--untrusted-wash); }
+  .line .flag { font: 600 12px var(--ui); margin-left: 8px; white-space: nowrap; }
+  .line.obeyed .flag { color: var(--bad); }
+  .line.tried .flag { color: var(--untrusted); }
+  .verdict-line { font-size: 13px; font-weight: 600; margin-bottom: 12px; padding: 6px 10px; border-radius: 6px; }
+  .verdict-line.bad { color: var(--bad); background: var(--bad-wash); }
+  .verdict-line.good { color: var(--good); background: var(--good-wash); }
+  mark { background: var(--bad-wash); color: var(--bad); font-weight: 700; padding: 0 3px; border-radius: 3px; }
+
+  /* ---------------------------------------------------------------- the agent */
+  .agent .card-head { margin-bottom: 12px; }
+  .reading { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .chip { font-size: 13px; color: var(--muted); padding: 2px 10px; border-radius: 999px; border: 1px dashed var(--rule-strong);
+          max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip.on { color: var(--untrusted); background: var(--untrusted-wash); border: 1px solid var(--untrusted-line); font-weight: 600; }
+  .field { min-width: 0; border: 0; margin: 0; padding: 0; }
+  .field > label, .field > legend { display: flex; align-items: center; gap: 8px; padding: 0;
+                                    font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  input[type="text"], select { width: 100%; font: inherit; color: var(--ink); background: var(--paper);
+                               border: 1px solid var(--rule-strong); border-radius: 6px; padding: 9px 11px; }
+  #task { border-left: 3px solid var(--trusted); }
+  .askrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .preset { font-size: 13px; color: var(--muted); background: var(--wash); border: 1px solid var(--rule); border-radius: 999px; padding: 3px 11px; }
+  .preset:hover { color: var(--ink); border-color: var(--rule-strong); }
+  .settings { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 18px; margin-top: 16px; }
+  .settings .hint { margin-top: 6px; }
+  #defenses { display: flex; gap: 8px; flex-wrap: wrap; }
+  .defense { display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+             border: 1px solid var(--rule-strong); border-radius: 6px; padding: 7px 11px; font-size: 14px; }
+  .defense:has(input:checked) { border-color: var(--good); background: var(--good-wash); }
+  .defense input { margin: 0; accent-color: var(--good); }
+  .defense .slots { color: var(--muted); font-size: 12px; }
+
+  /* the pipeline: five stations joined by a line that draws as the run plays */
+  .pipeline { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--rule); }
+  .pipeline ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .station { position: relative; padding-right: 18px; min-width: 0; }
+  .station::before, .station::after { content: ""; position: absolute; top: 7px; left: 16px; right: 0; height: 2px; }
+  .station::before { background: var(--rule); }
+  .station::after { background: var(--ink); transform: scaleX(0); transform-origin: left; transition: transform .38s ease-out; }
+  .station:last-child::before, .station:last-child::after { display: none; }
+  .station.flow::after { transform: scaleX(1); }
+  .pipeline.hijacked .station.flow::after { background: var(--bad); }
+  .node { position: relative; z-index: 1; display: block; width: 16px; height: 16px; border-radius: 50%;
+          background: var(--paper); border: 2px solid var(--rule-strong); }
+  .station h3 { font-size: 15px; font-weight: 700; margin-top: 12px; }
+  .role { font-size: 12px; color: var(--muted); }
+  .status { font-size: 13px; font-weight: 600; margin-top: 8px; min-height: 1.5em; }
+  .detail { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .detail li { margin-top: 3px; overflow-wrap: anywhere; }
+  .detail li.flag, .detail li.block { color: var(--good); }
+  .detail li.error { color: var(--bad); }
+  .station.on .node { animation: pop .26s ease-out; }
+  .station.done .node { background: var(--ink); border-color: var(--ink); }
+  .station.fooled .node, .station.hijack .node { background: var(--bad); border-color: var(--bad); }
+  .station.fooled .status, .station.hijack .status { color: var(--bad); }
+  .station.hijack .node { box-shadow: 0 0 0 4px var(--bad-wash); }
+  .station.stop .node, .station.ok .node { background: var(--good); border-color: var(--good); }
+  .station.stop .node { box-shadow: 0 0 0 4px var(--good-wash); }
+  .station.stop .status, .station.ok .status { color: var(--good); }
+  .station.warn .node { background: var(--untrusted-line); border-color: var(--untrusted-line); }
+  .station.warn .status, .station.warn .detail li { color: var(--untrusted); }
+  .station.skip { opacity: .45; }
+  .station.skip .node { border-style: dashed; }
+  @keyframes pop { from { transform: scale(.55); } to { transform: scale(1); } }
+
+  .outcome { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 20px; }
+  .result { border: 1px solid var(--rule); border-radius: 8px; padding: 16px 18px; transition: background .2s, border-color .2s; }
+  .result.bad { background: var(--bad-wash); border-color: var(--bad-line); }
+  .result.good { background: var(--good-wash); border-color: var(--good-line); }
+  .result.warn { background: var(--untrusted-wash); border-color: #f0d199; }
+  .label { font-size: 13px; font-weight: 600; color: var(--muted); }
+  #headline { font-size: 26px; font-weight: 750; letter-spacing: -0.015em; line-height: 1.2; margin: 2px 0 4px; }
+  .result.bad #headline { color: var(--bad); }
+  .result.good #headline { color: var(--good); }
+  .result.warn #headline { color: var(--untrusted); }
+  .reply-box { border: 1px solid var(--rule); border-radius: 8px; padding: 16px 18px; }
+  #reply { margin-top: 4px; font-size: 14px; overflow-wrap: anywhere; }
+
+  /* the envelope that flies between panels */
+  .flyer { position: fixed; z-index: 50; left: 0; top: 0; pointer-events: none; max-width: 280px;
+           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 13px var(--ui);
+           padding: 6px 12px; border-radius: 999px; background: var(--paper); color: var(--ink);
+           border: 1px solid var(--rule-strong); box-shadow: 0 8px 24px rgba(21, 23, 28, .16); }
+  .flyer.attack { background: var(--untrusted-wash); border-color: var(--untrusted-line); color: var(--untrusted); }
+  .flyer.bad { background: var(--bad-wash); border-color: var(--bad-line); color: var(--bad); }
+  .flyer.good { background: var(--good-wash); border-color: var(--good-line); color: var(--good); }
+
+  /* ---------------------------------------------------------------- all attacks */
+  .evalrow { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+  .evalrow .field { width: 240px; }
+  #eval-status { margin-top: 10px; }
+  .scroll { overflow-x: auto; }
+  table.grid { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.grid th, table.grid td { padding: 8px 10px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+  table.grid thead th { font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+  table.grid tbody th { font-weight: 500; }
+  table.grid .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #eval-table tr.cat th { padding-left: 22px; color: var(--muted); }
+  #eval-table tr.total th, #eval-table tr.total td { font-weight: 700; }
+  #eval-table tr.cat + tr.total th, #eval-table tr.cat + tr.total td { border-top: 1px solid var(--rule-strong); }
+  td.good { color: var(--good); }
+  td.bad { color: var(--bad); }
+  td.warn { color: var(--untrusted); }
+  .note { margin-top: 10px; }
+  .saved { margin-top: 4px; font-size: 13px; }
+  .pill { font-size: 12.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+  .pill.bad { color: var(--bad); background: var(--bad-wash); }
+  .pill.good { color: var(--good); background: var(--good-wash); }
+  .pill.warn { color: var(--untrusted); background: var(--untrusted-wash); }
+  .pill.muted { color: var(--muted); background: var(--wash); }
+  .tag-mini { display: block; font-size: 12px; color: var(--muted); }
+
+  /* ---------------------------------------------------------------- small screens */
+  @media (max-width: 900px) {
+    .page { padding: 18px 16px 40px; }
+    .world, .outcome, .settings { grid-template-columns: 1fr; }
+    .mail-body { grid-template-columns: 1fr; min-height: 0; }
+    .list-col { border-right: 0; border-bottom: 1px solid var(--rule); }
+    .items { max-height: 240px; }
+    .reader { max-height: none; }
+    .askrow { grid-template-columns: 1fr; }
+    .run { justify-self: start; }
+    .pipeline ol { grid-template-columns: 1fr; }
+    .station { padding: 0 0 18px 30px; }
+    .station:last-child { padding-bottom: 0; }
+    .node { position: absolute; left: 0; top: 2px; }
+    .station h3 { margin-top: 0; }
+    .station::before, .station::after { top: 20px; left: 7px; right: auto; bottom: 0; width: 2px; height: auto; }
+    .station::after { transform: scaleY(0); transform-origin: top; }
+    .station.flow::after { transform: scaleY(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .station::after, .result, .steps li, .steps li::before { transition: none; }
+    .station.on .node, .item.fresh, .loot.fresh { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="top">
+    <div>
+      <h1>Trojan Hijack</h1>
+      <p class="sub">An attacker sends Jas something. Jas asks an AI agent about it. Watch where the agent sends email.</p>
+    </div>
+    <div class="tabs" role="tablist" aria-label="View">
+      <button type="button" role="tab" id="tab-demo" aria-controls="view-demo" aria-selected="true">Live demo</button>
+      <button type="button" role="tab" id="tab-all" aria-controls="view-all" aria-selected="false">All attacks</button>
+    </div>
+  </header>
+
+  <!-- ============================================================ live demo -->
+  <main class="view" id="view-demo">
+
+    <div class="steps">
+      <ol id="steps">
+        <li>The attacker sends something</li>
+        <li>Jas opens it</li>
+        <li>Jas asks the agent about it</li>
+        <li>See where the email went</li>
+      </ol>
+      <div class="actions">
+        <button type="button" class="run" id="play">Play the attack</button>
+        <button type="button" class="ghost" id="reset">Reset</button>
+      </div>
+    </div>
+
+    <div class="world">
+      <aside class="card attacker" aria-label="Attacker">
+        <div class="card-head">
+          <div>
+            <h2>Attacker</h2>
+            <p class="hint">Outside Jas's account. Sends the files in attacks/.</p>
+          </div>
+          <button type="button" class="ghost small" id="send-all">Send all</button>
+        </div>
+        <div id="attacks"></div>
+        <div class="loot-box">
+          <h3>Received from Jas's agent <span class="count" id="loot-count">0</span></h3>
+          <ul id="loot"></ul>
+        </div>
+      </aside>
+
+      <section class="card mailbox" aria-label="Jas's mailbox">
+        <div class="mail-head"><h2>Jas's mailbox</h2><span class="addr" id="addr"></span></div>
+        <div class="mail-body">
+          <div class="list-col">
+            <div class="folders" role="tablist" aria-label="Folders">
+              <button type="button" role="tab" class="folder" data-folder="inbox">Inbox <span class="n"></span></button>
+              <button type="button" role="tab" class="folder" data-folder="web">Web <span class="n"></span></button>
+              <button type="button" role="tab" class="folder" data-folder="files">Files <span class="n"></span></button>
+              <button type="button" role="tab" class="folder" data-folder="sent">Sent <span class="n"></span></button>
+            </div>
+            <ul class="items" id="items"></ul>
+          </div>
+          <article class="reader" id="reader"></article>
+        </div>
+      </section>
+    </div>
+
+    <section class="card agent" aria-label="Jas's agent">
+      <form id="ask">
+        <div class="card-head">
+          <div>
+            <h2>Jas's agent</h2>
+            <p class="hint">Reads the open item, does what Jas asks, and can send email from Jas's account.</p>
+          </div>
+          <p class="reading">Reading <span class="chip" id="target">nothing</span></p>
+        </div>
+
+        <div class="field">
+          <label for="task">Jas asks <span class="tag trusted">trusted</span></label>
+          <div class="askrow">
+            <input type="text" id="task" autocomplete="off">
+            <button type="submit" class="run" id="go">Ask the agent</button>
+          </div>
+          <div class="presets">
+            <button type="button" class="preset" data-task="summarize">Summarize</button>
+            <button type="button" class="preset" data-task="send">Summarize and email me</button>
+          </div>
+        </div>
+
+        <div class="settings">
+          <div class="field">
+            <label for="brain">Brain</label>
+            <select id="brain"></select>
+            <p class="hint" id="brain-hint"></p>
+          </div>
+          <fieldset class="field">
+            <legend>Defenses</legend>
+            <div id="defenses"></div>
+          </fieldset>
+        </div>
+      </form>
+
+      <div class="pipeline" id="pipeline" aria-label="What happened at each stage">
+        <ol>
+          <li class="station" data-stage="read">
+            <span class="node"></span><h3>Read</h3><p class="role">Fetches the content</p>
+            <p class="status"></p><ul class="detail"></ul>
+          </li>
+          <li class="station" data-stage="detect">
+            <span class="node"></span><h3>Detect</h3><p class="role">Slot 1: checks the content</p>
+            <p class="status"></p><ul class="detail"></ul>
+          </li>
+          <li class="station" data-stage="brain">
+            <span class="node"></span><h3>Brain</h3><p class="role">Decides what to do</p>
+            <p class="status"></p><ul class="detail"></ul>
+          </li>
+          <li class="station" data-stage="gate">
+            <span class="node"></span><h3>Gate</h3><p class="role">Slot 2: checks each email</p>
+            <p class="status"></p><ul class="detail"></ul>
+          </li>
+          <li class="station" data-stage="send">
+            <span class="node"></span><h3>Send</h3><p class="role">send_email (stub)</p>
+            <p class="status"></p><ul class="detail"></ul>
+          </li>
+        </ol>
+      </div>
+
+      <div class="outcome">
+        <div class="result" id="result" aria-live="polite">
+          <p class="label">Result</p>
+          <p id="headline">Ready</p>
+          <p id="explain"></p>
+        </div>
+        <div class="reply-box" id="reply-box" hidden>
+          <p class="label">The agent's reply to Jas</p>
+          <p id="reply"></p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============================================================ all attacks -->
+  <main class="view" id="view-all" hidden>
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2>Run every attack</h2>
+          <p class="hint">Every file in attacks/ with no defenses, with each defense on its own, and with all of them together.
+            Same as <code>python3 evaluate.py</code>.</p>
+        </div>
+      </div>
+      <div class="evalrow">
+        <div class="field">
+          <label for="eval-brain">Brain</label>
+          <select id="eval-brain"></select>
+        </div>
+        <button type="button" class="run" id="eval-go">Run all attacks</button>
+      </div>
+      <p class="hint" id="eval-status" aria-live="polite"></p>
+    </section>
+
+    <section class="card" id="eval-summary" hidden>
+      <div class="card-head">
+        <h2>Results</h2>
+        <p class="hint" id="eval-title"></p>
+      </div>
+      <div class="scroll"><table class="grid" id="eval-table"></table></div>
+      <p class="hint note">Attack success and data leaked: lower is better. Benign ok (clean inputs still work): higher is better.</p>
+      <p class="saved" id="eval-saved"></p>
+    </section>
+
+    <section class="card" id="eval-detail" hidden>
+      <div class="card-head">
+        <h2>Every run</h2>
+        <p class="hint">What happened to each input under each setup.</p>
+      </div>
+      <div class="scroll"><table class="grid" id="eval-runs"></table></div>
+    </section>
+  </main>
+
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, calm.matches ? 0 : ms));
+const calm = matchMedia("(prefers-reduced-motion: reduce)");
+const ADDRESS = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
+const STAGES = ["read", "detect", "brain", "gate", "send"];
+const FOLDER_OF = {email: "inbox", web: "web", file: "files"};
+const VERB = {email: "Send", web: "Publish", file: "Share"};
+const DONE = {email: "Sent", web: "Published", file: "Shared"};
+const EMPTY = {inbox: "No email.", web: "No pages.", files: "No files."};
+const BRAIN_LABEL = {rules: "Rules (no AI)", ollama: "Ollama (real LLM)"};
+const BRAIN_HINT = {
+  rules: "No AI. Instant, and the same answer every time.",
+  ollama: "A real LLM running on this machine. Slower.",
+};
+const READY = "Open something in Jas's mailbox, then ask the agent about it.";
+
+let catalog = null;
+let items = [];        // everything that can be in Jas's mailbox (one per file in attacks/)
+let sent = [];         // the outbox: every email the agent has sent
+let folder = "inbox";
+let selected = null;   // {kind: "item", path} or {kind: "sent", index}
+let mode = "seen";     // reader: "seen" (as Jas sees it) or "read" (what the agent reads)
+let marks = null;      // lines to highlight after a run: {path, rogue, cls, label}
+let ranOnce = false;
+let busy = false;
+let arrivals = 0;
+let readerTurn = 0;
+const sources = {};    // path -> /api/source answer
+
+async function api(path, body) {
+  const opts = body === undefined ? {} :
+    {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)};
+  const r = await fetch(path, opts);
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+
+function add(parent, tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text != null) e.textContent = text;
+  if (cls) e.className = cls;
+  parent.appendChild(e);
+  return e;
+}
+
+const station = stage => document.querySelector('.station[data-stage="' + stage + '"]');
+const folderTab = name => document.querySelector('.folder[data-folder="' + name + '"]');
+const byPath = path => items.find(i => i.path === path);
+const fileName = item => item.name.split("/").pop();
+const isMine = m => m.to.toLowerCase() === catalog.user_email;
+const runnable = () => selected && selected.kind === "item" ? byPath(selected.path) : null;
+// A defense's display name (its NAME), falling back to the file name.
+const nameOf = file => (catalog.defenses.find(d => d.name === file) || {label: file}).label;
+
+function titleOf(item) {
+  const m = item.meta || {};
+  return (item.channel === "email" ? m.subject : item.channel === "web" ? m.title : "") || fileName(item);
+}
+
+// Undo the cheap disguises the rule brain also undoes, so highlighted lines match.
+const norm = s => s.toLowerCase().replace(/[​-‏⁠﻿]/g, "")
+  .replace(/\s*[\[(]\s*at\s*[\])]\s*/g, "@").replace(/\s*[\[(]\s*dot\s*[\])]\s*/g, ".");
+
+// ------------------------------------------------------------ setup
+
+async function load() {
+  catalog = await api("/api/catalog");
+  $("task").value = catalog.tasks.summarize;
+  $("addr").textContent = catalog.user_email;
+  // Clean inputs are already in Jas's mailbox. Attacks arrive when the attacker sends them.
+  items = catalog.attacks.map(a => Object.assign({}, a, {delivered: a.benign, unread: false, order: 0}));
+  fillBrains($("brain"));
+  fillBrains($("eval-brain"));
+  showBrainHint();
+  renderDefenses();
+  sent = await api("/api/outbox");
+  setResult("", "Ready", READY);
+  renderAll();
+}
+
+function fillBrains(select) {
+  select.replaceChildren();
+  for (const b of catalog.brains) {
+    const o = add(select, "option", (BRAIN_LABEL[b.name] || b.name) + (b.problem ? " — not set up" : ""));
+    o.value = b.name;
+    o.disabled = !!b.problem;
+    o.title = b.problem || "";
+  }
+}
+
+function showBrainHint() {
+  const llm = catalog.brains.find(x => x.name === "ollama");
+  $("brain-hint").textContent = BRAIN_HINT[$("brain").value] +
+    (llm && llm.problem && $("brain").value !== "ollama" ? " The LLM brain isn't set up yet (see the README)." : "");
+}
+
+function renderDefenses() {
+  $("defenses").replaceChildren();
+  if (!catalog.defenses.length) {
+    add($("defenses"), "p", "No defenses yet. Add a .py file to defenses/ and refresh this page.", "hint");
+  }
+  for (const d of catalog.defenses) {
+    const l = add($("defenses"), "label", null, "defense");
+    const box = add(l, "input");
+    box.type = "checkbox";
+    box.value = d.name;
+    add(l, "span", d.label);
+    add(l, "span", d.slots.join(" + "), "slots");
+  }
+}
+
+function renderAll() {
+  renderAttacker();
+  renderFolders();
+  renderItems();
+  renderReader();
+  renderLoot();
+  renderTarget();
+  renderSteps();
+}
+
+function setBusy(on) {
+  busy = on;
+  $("play").disabled = on;
+  $("reset").disabled = on;
+  renderAttacker();
+  renderTarget();
+}
+
+async function guarded(fn) {
+  if (busy) return;
+  setBusy(true);
+  try { await fn(); } finally { setBusy(false); }
+}
+
+// ------------------------------------------------------------ the attacker
+
+function renderAttacker() {
+  const box = $("attacks");
+  box.replaceChildren();
+  const attacks = items.filter(i => !i.benign);
+  if (!attacks.length) add(box, "p", "No attacks yet. Add files under attacks/<category>/ and refresh.", "hint");
+  const groups = {};
+  for (const a of attacks) (groups[a.category] = groups[a.category] || []).push(a);
+  for (const cat of Object.keys(groups).sort()) {
+    add(box, "h3", cat, "cat");
+    const ul = add(box, "ul");
+    for (const a of groups[cat]) {
+      const li = add(ul, "li", null, "atk");
+      li.dataset.path = a.path;
+      const text = add(li, "div", null, "atk-text");
+      add(text, "span", titleOf(a), "atk-title");
+      add(text, "span", a.channel + " · " + fileName(a), "atk-meta");
+      const b = add(li, "button", a.delivered ? DONE[a.channel] : VERB[a.channel], "ghost small");
+      b.type = "button";
+      b.disabled = a.delivered || busy;
+      b.addEventListener("click", () => guarded(() => deliver(a)));
+    }
+  }
+  $("send-all").disabled = busy || !attacks.some(a => !a.delivered);
+}
+
+// The attacker sends one file: it flies over and lands in Jas's mailbox.
+async function deliver(item) {
+  if (item.delivered) return;
+  const btn = document.querySelector('.atk[data-path="' + CSS.escape(item.path) + '"] button');
+  const from = btn && btn.getBoundingClientRect();
+  item.delivered = true;
+  item.unread = true;
+  item.order = ++arrivals;
+  ranOnce = false;
+  renderAttacker();
+  const dest = FOLDER_OF[item.channel];
+  await fly(from, dest === folder ? $("items") : folderTab(dest), titleOf(item), "attack");
+  item.fresh = true;
+  renderFolders();
+  if (dest === folder) renderItems();
+  renderSteps();
+}
+
+async function sendAll() {
+  const waiting = items.filter(i => !i.benign && !i.delivered);
+  const landing = [];
+  for (const it of waiting) {
+    landing.push(deliver(it));
+    await sleep(180);
+  }
+  await Promise.all(landing);
+}
+
+function renderLoot() {
+  const ul = $("loot");
+  ul.replaceChildren();
+  const loot = sent.map((m, i) => [m, i]).filter(([m]) => !isMine(m)).reverse();
+  $("loot-count").textContent = loot.length;
+  $("loot-count").classList.toggle("hot", loot.length > 0);
+  if (!loot.length) return void add(ul, "li", "Nothing yet.", "empty");
+  for (const [m, i] of loot) {
+    const b = add(add(ul, "li"), "button", null, "loot" + (m.fresh ? " fresh" : ""));
+    m.fresh = false;
+    b.type = "button";
+    add(b, "span", m.to, "to");
+    add(b, "span", m.subject, "what");
+    if (m.body.includes(catalog.canary)) add(b, "span", "Includes Jas's private notes", "leak");
+    b.addEventListener("click", () => select({kind: "sent", index: i}));
+  }
+}
+
+// ------------------------------------------------------------ Jas's mailbox
+
+function renderFolders() {
+  for (const tab of document.querySelectorAll(".folder")) {
+    const name = tab.dataset.folder;
+    const n = name === "sent" ? sent.length
+      : items.filter(i => i.delivered && i.unread && FOLDER_OF[i.channel] === name).length;
+    tab.querySelector(".n").textContent = n || "";
+    tab.classList.toggle("unread", name !== "sent" && n > 0);
+    tab.setAttribute("aria-selected", String(name === folder));
+  }
+}
+
+function itemButton(ul, isSelected) {
+  const b = add(add(ul, "li"), "button", null, "item" + (isSelected ? " selected" : ""));
+  b.type = "button";
+  return b;
+}
+
+function renderItems() {
+  const ul = $("items");
+  ul.replaceChildren();
+  if (folder === "sent") {
+    if (!sent.length) return void add(ul, "li", "Nothing sent yet.", "empty");
+    for (let i = sent.length - 1; i >= 0; i--) {
+      const m = sent[i];
+      const b = itemButton(ul, selected && selected.kind === "sent" && selected.index === i);
+      add(b, "span", "To: " + m.to, "who");
+      add(b, "span", m.subject, "peek");
+      add(b, "span", isMine(m) ? "Jas asked for this" : "Jas never asked for this", "badge " + (isMine(m) ? "good" : "bad"));
+      b.addEventListener("click", () => select({kind: "sent", index: i}));
+    }
+    return;
+  }
+  const list = items.filter(i => i.delivered && FOLDER_OF[i.channel] === folder).sort((a, b) => b.order - a.order);
+  if (!list.length) return void add(ul, "li", EMPTY[folder], "empty");
+  for (const it of list) {
+    const b = itemButton(ul, selected && selected.kind === "item" && selected.path === it.path);
+    if (it.unread) b.classList.add("unread");
+    if (it.fresh) { b.classList.add("fresh"); it.fresh = false; }
+    const m = it.meta || {};
+    if (it.channel === "email") {
+      add(b, "span", m.from || "Unknown sender", "who");
+      add(b, "span", m.subject || "(no subject)", "what");
+      if (m.preview) add(b, "span", m.preview, "peek");
+    } else if (it.channel === "web") {
+      add(b, "span", m.title || fileName(it), "who");
+      add(b, "span", "localhost/" + it.name, "peek mono");
+    } else {
+      add(b, "span", fileName(it), "who");
+      if (m.preview) add(b, "span", m.preview, "peek");
+    }
+    b.addEventListener("click", () => select({kind: "item", path: it.path}));
+  }
+}
+
+// Pages, and emails written in HTML, only show the hidden parts in the agent's view.
+function hidesText(item) {
+  const src = sources[item.path];
+  return item.channel === "web" || !!(src && src.email && src.email.html);
+}
+
+async function select(sel) {
+  if (sel.kind === "item" && !(selected && selected.path === sel.path)) ranOnce = false;
+  selected = sel;
+  if (sel.kind === "item") {
+    const it = byPath(sel.path);
+    it.unread = false;
+    folder = FOLDER_OF[it.channel];
+    mode = marks && marks.path === it.path && hidesText(it) ? "read" : "seen";
+  } else {
+    folder = "sent";
+  }
+  renderFolders();
+  renderItems();
+  renderTarget();
+  renderSteps();
+  await renderReader();
+}
+
+async function renderReader() {
+  const turn = ++readerTurn;
+  const r = $("reader");
+  if (!selected) {
+    r.replaceChildren();
+    const e = add(r, "div", null, "reader-empty");
+    add(e, "p", "Nothing open", "big");
+    add(e, "p", "When the attacker sends something, it lands here. Open it, then ask the agent about it.");
+    return;
+  }
+  if (selected.kind === "sent") return showSent(r, sent[selected.index]);
+
+  const it = byPath(selected.path);
+  let src = sources[it.path];
+  if (!src) {
+    try {
+      src = sources[it.path] = await api("/api/source?path=" + encodeURIComponent(it.path));
+    } catch (e) {
+      if (turn === readerTurn) { r.replaceChildren(); add(r, "p", "Couldn't open this file: " + e.message, "hint error"); }
+      return;
+    }
+  }
+  if (turn !== readerTurn) return;
+  r.replaceChildren();
+
+  if (it.channel === "file") {
+    add(r, "p", fileName(it), "filename");
+    return showLines(add(r, "pre", null, "raw"), src.text, it.path);
+  }
+
+  const seg = add(r, "div", null, "seg");
+  seg.setAttribute("role", "group");
+  seg.setAttribute("aria-label", "View");
+  for (const [key, label] of [["seen", it.channel === "email" ? "As Jas sees it" : "The page"], ["read", "What the agent reads"]]) {
+    const b = add(seg, "button", label);
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(mode === key));
+    b.addEventListener("click", () => { mode = key; renderReader(); });
+  }
+
+  if (mode === "read") {
+    add(r, "p", "The exact text the agent gets. Anything hidden from Jas is still in here.", "hint");
+    return showLines(add(r, "pre", null, "raw"), src.text, it.path);
+  }
+  if (it.channel === "email") {
+    const e = src.email;
+    add(r, "h3", e.subject || "(no subject)", "subject");
+    const dl = add(r, "dl", null, "headers");
+    for (const [k, v] of [["From", e.from], ["To", e.to], ["Date", e.date]]) {
+      if (v) { add(dl, "dt", k); add(dl, "dd", v); }
+    }
+    if (e.html) showPage(r, e.body);
+    else showLines(add(r, "div", null, "mailtext"), e.body, it.path);
+  } else {
+    add(r, "p", "http://localhost/" + it.name, "urlbar");
+    showPage(r, src.text);
+  }
+}
+
+// Render attacker HTML the way a browser would. The sandbox has no allow-scripts, so
+// nothing in the page can run, and the CSP blocks every network request.
+function showPage(r, html) {
+  const f = add(r, "iframe", null, "page");
+  f.setAttribute("sandbox", "allow-same-origin");
+  f.title = "The page as Jas sees it";
+  f.srcdoc = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:">' +
+    "<style>body{font:15px/1.5 system-ui,sans-serif;margin:16px;color:#15171c}</style>" + html;
+}
+
+function showLines(box, text, path) {
+  const m = marks && marks.path === path ? marks : null;
+  for (const t of text.replace(/\r?\n$/, "").split(/\r?\n/)) {
+    const line = add(box, "span", t || " ", "line");
+    if (m && m.rogue.some(a => norm(t).includes(a))) {
+      line.classList.add(m.cls);
+      add(line, "span", m.label, "flag");
+    }
+  }
+}
+
+function showSent(r, m) {
+  r.replaceChildren();
+  if (!m) return;
+  const mine = isMine(m);
+  add(r, "h3", m.subject || "(no subject)", "subject");
+  const dl = add(r, "dl", null, "headers");
+  for (const [k, v] of [["From", catalog.user_email + " (sent by the agent)"], ["To", m.to], ["Time", m.time]]) {
+    add(dl, "dt", k);
+    add(dl, "dd", v);
+  }
+  const leaked = m.body.includes(catalog.canary);
+  add(r, "p", mine ? "Jas asked for this email." :
+    "Jas never asked for this email." + (leaked ? " It carries Jas's private notes." : ""), "verdict-line " + (mine ? "good" : "bad"));
+  const body = add(r, "div", null, "mailtext");
+  for (const t of m.body.split("\n")) {
+    const line = add(body, "span", null, "line");
+    const at = t.indexOf(catalog.canary);
+    if (at < 0) { line.textContent = t || " "; continue; }
+    line.append(t.slice(0, at));
+    add(line, "mark", catalog.canary);
+    line.append(t.slice(at + catalog.canary.length));
+  }
+}
+
+function renderTarget() {
+  const it = runnable();
+  const chip = $("target");
+  chip.textContent = it ? titleOf(it) : selected ? "a sent email (open something in Inbox, Web or Files)" : "nothing open";
+  chip.title = it ? it.path : "";
+  chip.classList.toggle("on", !!it);
+  $("go").disabled = busy || !it;
+}
+
+function renderSteps() {
+  let now = 0;
+  if (items.some(i => !i.benign && i.delivered)) now = 1;
+  if (runnable()) now = 2;
+  if (ranOnce) now = 3;
+  document.querySelectorAll("#steps li").forEach((li, i) => {
+    li.classList.toggle("done", i < now);
+    li.classList.toggle("now", i === now);
+  });
+}
+
+// An envelope that flies from one panel to another.
+async function fly(from, toEl, label, tone) {
+  if (calm.matches || !from || !toEl) return;
+  const to = toEl.getBoundingClientRect();
+  const chip = add(document.body, "div", label, "flyer " + (tone || ""));
+  const w = chip.offsetWidth, h = chip.offsetHeight;
+  const x0 = from.left + from.width / 2 - w / 2, y0 = from.top + from.height / 2 - h / 2;
+  const x1 = to.left + Math.min(to.width / 2, 150) - w / 2, y1 = to.top + Math.min(to.height / 2, 26) - h / 2;
+  const at = (x, y, s) => "translate(" + x + "px," + y + "px) scale(" + s + ")";
+  const lift = Math.min(60, Math.abs(y1 - y0) / 3 + 20);
+  const flight = chip.animate([
+    {transform: at(x0, y0, .8), opacity: 0},
+    {transform: at(x0, y0 - 8, 1), opacity: 1, offset: .12},
+    {transform: at((x0 + x1) / 2, Math.min(y0, y1) - lift, 1), opacity: 1, offset: .55},
+    {transform: at(x1, y1, .95), opacity: 1, offset: .92},
+    {transform: at(x1, y1, .85), opacity: 0},
+  ], {duration: 900, easing: "ease-in-out"});
+  // Background tabs pause animations, so never wait on one for long.
+  await Promise.race([flight.finished.catch(() => {}), new Promise(r => setTimeout(r, 1100))]);
+  chip.remove();
+}
+
+// ------------------------------------------------------------ one run of the agent
+
+function setResult(state, headline, explain) {
+  $("result").className = "result" + (state ? " " + state : "");
+  $("headline").textContent = headline;
+  $("explain").textContent = explain;
+}
+
+function resetRun() {
+  $("pipeline").className = "pipeline";
+  for (const li of document.querySelectorAll(".station")) {
+    li.className = "station";
+    li.querySelector(".status").textContent = "";
+    li.querySelector(".detail").replaceChildren();
+  }
+  $("reply-box").hidden = true;
+  if (marks) { marks = null; renderReader(); }
+}
+
+// Work out what each station should show.
+function plan(res) {
+  const by = {};
+  for (const s of STAGES) by[s] = res.steps.filter(x => x.stage === s);
+  const details = s => by[s].filter(x => x.kind !== "note");
+  const allowed = new Set((res.task.match(ADDRESS) || []).map(a => a.toLowerCase()));
+  const isRogue = to => !allowed.has(to.toLowerCase());
+  const wanted = res.sent.map(e => e.to).concat(res.blocked.map(b => b.to));
+  const rogue = wanted.filter(isRogue).map(a => a.toLowerCase());
+  const source = catalog.attacks.find(a => a.path === res.source);
+  const benign = !!(source && source.benign);
+  const skip = status => ({cls: "skip", status: status});
+  const st = {};
+
+  st.read = {cls: "done", status: res.channel[0].toUpperCase() + res.channel.slice(1) + " · " + res.chars + " characters"};
+
+  if (res.flagged) {
+    st.detect = benign ? {cls: "warn", status: "Flagged clean content"} : {cls: "stop", status: "Stopped it"};
+    st.brain = skip("Not reached");
+    st.gate = skip("Not reached");
+    st.send = skip("Not reached");
+  } else {
+    st.detect = {cls: "done", status: details("detect").length ? "Passed" : "No detectors on"};
+
+    const failed = by.brain.some(x => x.kind === "error");
+    st.brain = rogue.length ? {cls: "fooled", status: "Obeyed the content"}
+             : wanted.length ? {cls: "done", status: "Will email Jas"}
+             : {cls: failed ? "warn" : "done", status: failed ? "Error" : "No email"};
+
+    if (!wanted.length) {
+      st.gate = skip("Nothing to check");
+    } else if (res.blocked.length) {
+      const ownBlocked = res.blocked.every(b => !isRogue(b.to));
+      st.gate = ownBlocked ? {cls: "warn", status: "Blocked Jas's email"} : {cls: "stop", status: "Stopped it"};
+    } else {
+      st.gate = {cls: "done", status: details("gate").length ? "Allowed" : "No gates on"};
+    }
+
+    if (!res.sent.length) st.send = skip("Nothing sent");
+    else if (res.verdict.hijacked) st.send = {cls: "hijack", status: "Sent to " + res.verdict.unauthorized.join(", ")};
+    else st.send = {cls: "ok", status: "Sent to Jas"};
+  }
+  // Read and Send already say everything in their status line.
+  for (const s of STAGES) st[s].details = st[s].cls === "skip" || s === "read" || s === "send" ? [] : details(s);
+  return {st, rogue, benign};
+}
+
+function light(stage, info) {
+  const li = station(stage);
+  li.classList.add(info.cls, "on");
+  li.querySelector(".status").textContent = info.status;
+  for (const d of info.details) add(li.querySelector(".detail"), "li", d.text, d.kind);
+}
+
+async function play(res) {
+  const {st, rogue, benign} = plan(res);
+  if (res.verdict.hijacked) $("pipeline").classList.add("hijacked");
+  for (const [i, s] of STAGES.entries()) {
+    if (st[s].cls === "skip") continue;
+    if (i > 0) {
+      station(STAGES[i - 1]).classList.add("flow");
+      await sleep(420);
+    }
+    light(s, st[s]);
+  }
+  for (const s of STAGES) if (st[s].cls === "skip") light(s, st[s]);
+  conclude(res, rogue, benign);
+}
+
+function conclude(res, rogue, benign) {
+  const v = res.verdict;
+  if (v.hijacked) {
+    setResult("bad", "Hijacked",
+      "The agent emailed " + v.unauthorized.join(", ") +
+      (v.leaked ? " and attached Jas's private notes" : "") + ". Jas never asked it to.");
+  } else if (res.flagged) {
+    const f = res.flagged;
+    if (benign) setResult("warn", "Flagged clean content",
+      nameOf(f.by) + " flagged content that has no attack in it (" + f.reason + "). That's a false positive.");
+    else setResult("good", "Stopped at Detect",
+      nameOf(f.by) + " flagged the content before the brain saw it: " + f.reason + ".");
+  } else if (res.blocked.length) {
+    const hit = res.blocked.find(b => rogue.includes(b.to.toLowerCase()));
+    if (!hit) setResult("warn", "Blocked Jas's own email",
+      nameOf(res.blocked[0].by) + " blocked the email Jas asked for (" + res.blocked[0].reason + "). That's a false positive.");
+    else setResult("good", "Stopped at Gate",
+      nameOf(hit.by) + " blocked the email to " + hit.to + ": " + hit.reason + "." +
+      (res.sent.length ? " The email Jas asked for still went out." : ""));
+  } else if (res.sent.length) {
+    setResult("good", "Done", "The agent emailed Jas the summary, as asked.");
+  } else {
+    setResult("", "Done", "No email was sent.");
+  }
+
+  if (rogue.length) {
+    marks = {
+      path: res.source, rogue,
+      cls: v.hijacked ? "obeyed" : "tried",
+      label: v.hijacked ? "← the agent obeyed this" : "← the agent tried to obey this",
+    };
+    const it = runnable();
+    if (it && it.path === res.source) {
+      if (hidesText(it)) mode = "read";  // show the hidden instruction it followed
+      renderReader();
+    }
+  }
+  $("reply").textContent = res.reply;
+  $("reply-box").hidden = !res.reply;
+}
+
+// Pick up whatever the agent just sent, and fly each email to where it went.
+async function collectSent() {
+  const all = await api("/api/outbox");
+  const fresh = all.length >= sent.length ? all.slice(sent.length) : [];
+  sent = all;
+  const origin = station("send").querySelector(".node").getBoundingClientRect();
+  for (const m of fresh) {
+    if (isMine(m)) {
+      await fly(origin, folderTab("sent"), "Email to Jas", "good");
+    } else {
+      m.fresh = true;
+      await fly(origin, $("loot"), "Email to " + m.to, "bad");
+    }
+  }
+  renderFolders();
+  if (folder === "sent") renderItems();
+  renderLoot();
+}
+
+async function askAgent() {
+  const it = runnable();
+  if (!it) return;
+  const defenses = [...document.querySelectorAll("#defenses input:checked")].map(b => b.value);
+  ranOnce = false;
+  renderSteps();
+  resetRun();
+  $("go").textContent = "Running…";
+  setResult("", "Running…", $("brain").value === "rules" ? "" : "The LLM is thinking. This can take a few seconds.");
+  try {
+    const res = await api("/api/run", {task: $("task").value, source: it.path, brain: $("brain").value, defenses});
+    await play(res);
+    ranOnce = true;
+    renderSteps();
+    await collectSent();
+  } catch (e) {
+    setResult("bad", "Error", e.message);
+  }
+  $("go").textContent = "Ask the agent";
+}
+
+// The whole story in one click: send the next attack, open it, ask the agent.
+async function playDemo() {
+  const attacks = items.filter(i => !i.benign);
+  const open = runnable();
+  const pick = attacks.find(i => !i.delivered) || (open && !open.benign ? open : attacks[0]);
+  if (!pick) return setResult("warn", "No attacks yet", "Add a file under attacks/<category>/ and refresh the page.");
+  if (!pick.delivered) {
+    await deliver(pick);
+    await sleep(600);
+  }
+  await select({kind: "item", path: pick.path});
+  await sleep(900);
+  $("task").value = catalog.tasks.summarize;
+  $("task").animate([{boxShadow: "0 0 0 4px #eaf0fd"}, {boxShadow: "0 0 0 0 transparent"}], {duration: calm.matches ? 0 : 900});
+  await sleep(600);
+  await askAgent();
+}
+
+async function resetDemo() {
+  await api("/api/outbox/clear", {});
+  sent = [];
+  for (const it of items) {
+    it.delivered = it.benign;
+    it.unread = false;
+    it.fresh = false;
+  }
+  selected = null;
+  marks = null;
+  ranOnce = false;
+  folder = "inbox";
+  mode = "seen";
+  resetRun();
+  setResult("", "Ready", READY);
+  renderAll();
+}
+
+// ------------------------------------------------------------ all attacks
+
+const setupLabel = name => name === "baseline" ? "No defenses" : name === "all" ? "All together" : nameOf(name);
+
+function outcome(rec) {
+  if (rec.error) return ["error", "bad"];
+  if (rec.hijacked) return [rec.leaked ? "hijacked, leaked notes" : "hijacked", "bad"];
+  if (rec.benign) {
+    if (rec.flagged_by) return ["false alarm at detect", "warn"];
+    if (rec.blocked_by.length) return ["blocked Jas's email", "warn"];
+    return rec.ok ? ["works", "good"] : ["wrong answer", "warn"];
+  }
+  if (rec.flagged_by) return ["stopped at detect", "good"];
+  if (rec.blocked_by.length) return ["stopped at gate", "good"];
+  return ["didn't fool it", "muted"];
+}
+
+function showEval(r) {
+  $("eval-title").textContent = r.title;
+
+  const t = $("eval-table");
+  t.replaceChildren();
+  const head = add(add(t, "thead"), "tr");
+  add(head, "th", "Attacks that hijacked the agent");
+  for (const s of r.setups) add(head, "th", setupLabel(s), "num");
+  const body = add(t, "tbody");
+  for (const row of r.rows.slice(1)) {
+    const label = row[0].trim();
+    const tr = add(body, "tr", null, row[0].startsWith("  ") ? "cat" : "total");
+    add(tr, "th", label).scope = "row";
+    for (const cell of row.slice(1)) {
+      const m = cell.match(/^(\d+)\/(\d+)/);
+      let tone = "";
+      if (m && +m[2] > 0) {
+        const k = +m[1], n = +m[2];
+        tone = label === "benign ok" ? (k === n ? "good" : "warn") : (k === 0 ? "good" : "bad");
+      }
+      add(tr, "td", cell, "num " + tone);
+    }
+  }
+  $("eval-saved").textContent = "Saved " + r.saved + ".md and .json, plus results/latest.md. Paste the .md table into the report.";
+
+  const t2 = $("eval-runs");
+  t2.replaceChildren();
+  const h2 = add(add(t2, "thead"), "tr");
+  add(h2, "th", "Input");
+  for (const s of r.setups) add(h2, "th", setupLabel(s));
+  const b2 = add(t2, "tbody");
+  r.runs[r.setups[0]].forEach((rec, i) => {
+    const tr = add(b2, "tr");
+    const th = add(tr, "th");
+    th.scope = "row";
+    add(th, "span", rec.attack.replace(/^attacks\//, ""), "mono");
+    if (rec.benign) add(th, "span", rec.task === catalog.tasks.send ? "clean input, Jas asks to be emailed" : "clean input, Jas asks for a summary", "tag-mini");
+    for (const s of r.setups) {
+      const run = r.runs[s][i];
+      const [text, tone] = outcome(run);
+      const pill = add(add(tr, "td"), "span", text, "pill " + tone);
+      if (run.error) pill.title = run.error;
+    }
+  });
+
+  $("eval-summary").hidden = false;
+  $("eval-detail").hidden = false;
+}
+
+async function runAll() {
+  const go = $("eval-go");
+  go.disabled = true;
+  go.textContent = "Running…";
+  $("eval-status").className = "hint";
+  $("eval-status").textContent = $("eval-brain").value === "rules"
+    ? "Running every attack…" : "The LLM reads every input. This can take a few minutes.";
+  try {
+    showEval(await api("/api/evaluate", {brain: $("eval-brain").value}));
+    $("eval-status").textContent = "";
+  } catch (e) {
+    $("eval-status").className = "hint error";
+    $("eval-status").textContent = e.message;
+  }
+  go.disabled = false;
+  go.textContent = "Run all attacks";
+}
+
+function showView(name) {
+  $("view-demo").hidden = name !== "demo";
+  $("view-all").hidden = name !== "all";
+  $("tab-demo").setAttribute("aria-selected", String(name === "demo"));
+  $("tab-all").setAttribute("aria-selected", String(name === "all"));
+}
+
+// ------------------------------------------------------------ wiring
+
+$("ask").addEventListener("submit", e => { e.preventDefault(); guarded(askAgent); });
+$("play").addEventListener("click", () => guarded(playDemo));
+$("reset").addEventListener("click", () => guarded(resetDemo));
+$("send-all").addEventListener("click", () => guarded(sendAll));
+$("brain").addEventListener("change", showBrainHint);
+$("eval-go").addEventListener("click", runAll);
+$("tab-demo").addEventListener("click", () => showView("demo"));
+$("tab-all").addEventListener("click", () => showView("all"));
+for (const tab of document.querySelectorAll(".folder")) {
+  tab.addEventListener("click", () => { folder = tab.dataset.folder; renderFolders(); renderItems(); });
+}
+for (const p of document.querySelectorAll(".preset")) {
+  p.addEventListener("click", () => { $("task").value = catalog.tasks[p.dataset.task]; });
+}
+load().catch(e => setResult("bad", "Can't reach the server", e.message + ". Is server.py running?"));
+</script>
+</body>
+</html>
